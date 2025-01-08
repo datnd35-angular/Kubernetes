@@ -511,3 +511,125 @@ Kubernetes giải quyết ba loại vấn đề mạng chính:
 4. **External Communication**  
    - Giao tiếp giữa internet bên ngoài và các dịch vụ bên trong cụm Kubernetes được quản lý bởi các loại **service** như `NodePort`, `LoadBalancer`, hoặc `Ingress`.
 
+
+### **8. Kubernetes Networking Architecture: Container-to-Container, Pod-to-Pod, Pod-to-Service Networking**:
+
+**Container-to-Container Networking**  
+- Trong mô hình mạng, một thiết bị hoặc máy ảo có thể giao tiếp trực tiếp qua **thiết bị Ethernet**. Ví dụ, khi hai laptop được kết nối trong cùng một mạng, chúng sử dụng Ethernet để trao đổi dữ liệu.  
+- Trong môi trường Linux, mỗi tiến trình trên một máy sử dụng **network namespace** – một ngăn xếp mạng riêng bao gồm thiết bị mạng, bảng định tuyến và các quy tắc tường lửa.  
+- Khi một tiến trình bắt đầu chạy, nó được tự động gán vào **root network namespace** và có thể truy cập địa chỉ IP bên ngoài.  
+
+Trong Kubernetes, mỗi **container chỉ chạy một tiến trình duy nhất**. Nếu tiến trình này cần giao tiếp ra ngoài, nó phải sử dụng mạng của container. Khi các container được gom lại thành một **pod**, tất cả các container trong cùng một pod sẽ **chia sẻ chung địa chỉ IP và không gian cổng**. Do đó, các container trong cùng một pod có thể giao tiếp với nhau qua `localhost`.
+
+**Pod-to-Pod Networking**  
+- Giao tiếp giữa các pod khác nhau yêu cầu sử dụng **root network namespace** để định tuyến dữ liệu thông qua node chủ.  
+- Kubernetes sử dụng **CIDR (Classless Inter-Domain Routing)** để cung cấp một dải địa chỉ IP duy nhất cho các pod trên mỗi node.  
+- Khi một pod được tạo, nó sẽ được node cấp phát một địa chỉ IP, đảm bảo rằng mỗi pod đều có một địa chỉ IP riêng biệt và không có pod nào không có IP.  
+- Việc định tuyến giữa các pod thông qua **veth (virtual Ethernet)** – một cặp thiết bị mạng ảo giúp kết nối giữa pod và mạng của node.  
+
+**Pod-to-Service Networking**  
+- **Dịch vụ (Service)** trong Kubernetes cung cấp khả năng thay thế động địa chỉ IP của các pod mà nó quản lý.  
+- Khi một **Deployment** được tạo, nó có thể sinh ra các pod mới hoặc tăng/giảm số lượng pod theo nhu cầu. Địa chỉ IP của các pod này không cố định, do đó việc quản lý kết nối trực tiếp giữa các pod là khó khăn.  
+- Thay vào đó, Kubernetes sử dụng dịch vụ với **DNS và cơ chế phân giải tên** để giao tiếp với pod thông qua một IP ảo hoặc tên miền tĩnh bất kể địa chỉ IP thực tế của pod có thay đổi.  
+
+**Service và Selector**  
+- Một dịch vụ có thể theo dõi trạng thái của các pod thông qua **label selector**. Khi các pod có cùng nhãn được tạo, dịch vụ sẽ tự động nhận diện và theo dõi các pod đó.  
+- Dịch vụ cấp phát một **địa chỉ IP ảo duy nhất** cho nhóm các pod mà nó quản lý, đồng thời thực hiện **load balancing** giữa các pod này.  
+- Mọi lưu lượng truy cập đến địa chỉ IP ảo của dịch vụ sẽ được phân phối đến các pod phía sau.  
+- Nếu một pod bị xóa, dịch vụ vẫn tiếp tục hoạt động và đợi các pod mới có cùng nhãn được tạo ra, sau đó tự động cập nhật bảng định tuyến mà không gây gián đoạn kết nối.
+
+**Kết nối bên ngoài cụm Kubernetes**  
+- Khi cần giao tiếp với các ứng dụng hoặc dịch vụ bên ngoài cụm Kubernetes, dịch vụ sẽ sử dụng **root network namespace** cùng với bảng định tuyến IP (`IP table`) để xử lý.  
+- Việc giao tiếp này có thể diễn ra với:  
+  - **Các máy ảo khác trong cùng cụm Kubernetes**.  
+  - **Các thiết bị hoặc ứng dụng bên ngoài cụm Kubernetes** thông qua địa chỉ IP công khai hoặc nội bộ, tùy thuộc vào cách cấu hình dịch vụ.
+
+### **9. Kubernetes Networking Architecture: External-to-Service, Egress, Ingress Networking**:
+
+Khi muốn **mở dịch vụ Kubernetes ra bên ngoài**, bạn cần cung cấp một **địa chỉ IP công khai** hoặc **DNS công khai** để người dùng có thể truy cập dịch vụ. Điều này đòi hỏi kết nối Internet và thường gặp trong môi trường **Cloud**.  
+
+- Trong các dịch vụ Cloud công cộng, bạn có thể mở endpoint hoặc API ra bên ngoài bằng cách sử dụng **load balancer** bên ngoài.  
+- Không thể sử dụng **default service** để làm điều này, mà cần có **external load balancer**.  
+
+**Hai hướng mở rộng dịch vụ**  
+1. **Egress (Lưu lượng đi ra ngoài)**  
+   - Đây là khi dịch vụ Kubernetes gửi yêu cầu ra bên ngoài. Ví dụ, bạn muốn gọi một trang web bên thứ ba, lấy dữ liệu về và xử lý trong hệ thống Kubernetes.  
+   - Điều này thường được sử dụng khi tích hợp với các dịch vụ SaaS.  
+   
+2. **Ingress (Lưu lượng đi vào)**  
+   - Đây là khi bạn triển khai ứng dụng (ví dụ: một website) trong Kubernetes và cho phép người dùng truy cập vào đó.  
+   - Bạn có thể **định nghĩa chính sách** để quản lý lưu lượng vào/ra như **whitelisting** hoặc **blacklisting** địa chỉ IP, cho phép hoặc chặn các dải IP cụ thể.  
+
+**Egress Networking**  
+- Khi một pod muốn gửi dữ liệu ra Internet, nó sẽ đi qua các bước sau:  
+  1. **Pod** gửi dữ liệu đến root network của **node** (worker node).  
+  2. Node sau đó chuyển dữ liệu đến **Internet Gateway**, nơi thực hiện **Network Address Translation (NAT)** để ánh xạ địa chỉ IP giữa người dùng và máy chủ nơi node được lưu trữ.  
+- Tuy nhiên, **Internet Gateway** không thể ánh xạ đến các pod riêng lẻ mà chỉ làm việc ở cấp **node**.  
+- Để giao tiếp được với bên ngoài, Kubernetes sử dụng:  
+  - **IP Table**: Lưu trữ và quản lý các quy tắc định tuyến.  
+  - **Cluster IP**: Hỗ trợ hoàn tất việc giao tiếp giữa các pod và Internet Gateway.  
+
+**Ingress Networking**  
+- **Ingress Load Balancer** là một tập hợp các quy tắc cho phép kết nối inbound vào dịch vụ Kubernetes từ bên ngoài.  
+- Nó được cấu hình để cung cấp một **URL có thể truy cập từ bên ngoài**.  
+- Ví dụ: Nếu bạn đang triển khai một website có endpoint HTTP, ingress sẽ là **điểm đầu vào** cho cụm Kubernetes.  
+- Người dùng sẽ truy cập ứng dụng qua URL mà không cần quan tâm đến số lượng pod hoặc node phía sau.  
+
+**Quản lý Authentication và Authorization tại lớp Ingress**  
+- Quá trình xác thực và phân quyền (authentication & authorization) được thực hiện tại lớp ingress. Điều này giúp giảm bớt gánh nặng cho các nhà phát triển khi họ không cần xây dựng cơ chế xác thực/phân quyền riêng lẻ trong từng container hay pod.  
+- Ingress đảm bảo rằng chỉ những người dùng đã được xác thực và phân quyền mới được phép truy cập vào dịch vụ.  
+
+### **10. Kubernetes Volumes – Storage Concepts**:
+
+**Networking và Third-Party Tools**  
+- Mạng trong Kubernetes thường dựa trên các công cụ từ bên thứ ba như **Flannel**, **Weave Net**, và **Calico**.  
+- Mô hình mạng này cho phép kết nối linh hoạt và dễ dàng mở rộng.
+
+ **Volume và Persistent Volume**  
+- **Volume** là đơn vị lưu trữ cơ bản trong Kubernetes, liên kết vùng lưu trữ với **pod** và cung cấp không gian để container làm việc.  
+- Có hai loại volume chính:  
+  1. **Ephemeral Volume**: Dữ liệu tạm thời, thường bị mất khi pod bị xóa hoặc khởi động lại.  
+  2. **Persistent Volume (PV)**: Lưu trữ dài hạn, dữ liệu vẫn còn ngay cả khi pod bị xóa hoặc tái tạo.
+
+**Cách Kubernetes Volume Hoạt Động**  
+1. **Pod và Containers**  
+   - Một pod có thể bao gồm nhiều container.  
+   - **Image** của container được gắn vào root của hệ thống file.  
+   - **Volumes** được gắn vào các đường dẫn cụ thể bên trong image và có thể dùng chung giữa các container trong pod.  
+
+2. **Các trường hợp sử dụng volume**  
+   - **Cache dữ liệu tạm thời**.  
+   - **Chia sẻ file giữa các container trong pod**.  
+   - **Nạp dữ liệu vào pod** khi khởi động hoặc **chia sẻ thông tin cấu hình** giữa các container.  
+
+3. **Volume tồn tại dưới 3 dạng**:  
+   - **Hệ thống file của pod**: Dữ liệu sẽ không bị mất khi một container trong pod gặp sự cố và khởi động lại.  
+   - **Chia sẻ dữ liệu giữa các container trong một pod**: Dữ liệu có thể dễ dàng được truy cập từ mọi container bằng cách áp dụng cùng một volume cho tất cả container trong pod.  
+   - **Gắn volume vào tất cả container trong pod**: Giúp các container có thể xem cùng một file từ bất kỳ container nào.
+
+**Lifecycle của Volume**  
+- Volume được định nghĩa trong bối cảnh của pod và vòng đời của nó gắn liền với pod.  
+- Khi pod bị xóa hoặc khởi động lại, tất cả dữ liệu trong volume cũng bị mất.  
+- **Ephemeral Volume** phù hợp cho các tác vụ tạm thời nhưng không nên dùng khi cần lưu trữ dữ liệu lâu dài.
+
+**Ephemeral Volume và Node Level Storage**  
+- Có các loại **ephemeral volumes** liên quan chặt chẽ đến vòng đời của **node** và bị xóa khi node bị tắt.  
+- Một pod được triển khai trên một node khả dụng, và volume như **emptyDir** hoặc **hostPath** có thể được sử dụng để tương tác với ephemeral storage ở cấp độ node.  
+- Tuy nhiên, khi node gặp sự cố hoặc bị thay thế, dữ liệu trong các ephemeral volumes này sẽ bị mất hoàn toàn.  
+
+**Persistent Volume và Persistent Volume Claim**  
+- Khi cần lưu trữ ổn định vượt ngoài vòng đời của node hoặc pod, **Persistent Volume (PV)** sẽ được sử dụng.  
+- **Persistent Volume** có thể nằm trong hoặc ngoài cụm Kubernetes, thường là các dịch vụ lưu trữ đám mây như **AWS Elastic Block Store**, **Azure Disk**, hoặc **NFS**.  
+- Để sử dụng persistent volume, Kubernetes sử dụng khái niệm **Persistent Volume Claim (PVC)**, cho phép pod yêu cầu một PV cụ thể và gắn kết nó vào container.  
+
+**Các loại Volume được hỗ trợ trong Kubernetes**  
+Kubernetes hỗ trợ nhiều loại volume khác nhau như:  
+- **awsElasticBlockStore**  
+- **AzureDisk**  
+- **AzureFiles**  
+- **NFS (Network File System)**  
+- **iSCSI**  
+- **Persistent Volume Claim (PVC)**  
+
+Bằng cách sử dụng PVC, bạn có thể yêu cầu và gắn kết các loại volume này vào container để đảm bảo rằng dữ liệu vẫn tồn tại ngay cả khi pod hoặc node bị xóa hoặc thay thế.  
+
